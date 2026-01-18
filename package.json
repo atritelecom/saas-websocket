@@ -1,22 +1,14 @@
 {
-  "name": "atritelecom-agent",
+  "name": "saas-websocket",
   "version": "2.0.0",
-  "description": "Agente de monitoramento com suporte a câmeras e IoT",
-  "main": "agent.js",
+  "description": "Servidor WebSocket para IoT e Câmeras",
+  "main": "server.js",
   "scripts": {
-    "start": "node agent.js",
-    "build": "pkg agent.js --targets node18-win-x64 --output dist/AtritelecomAgent.exe"
-  },
-  "bin": "agent.js",
-  "pkg": {
-    "scripts": "agent.js",
-    "targets": ["node18-win-x64"],
-    "outputPath": "dist"
+    "start": "node server.js"
   },
   "dependencies": {
-    "ws": "^8.14.2"
-  },
-  "devDependencies": {
-    "pkg": "^5.8.1"
+    "express": "^4.18.2",
+    "ws": "^8.14.2",
+    "axios": "^1.6.0"
   }
 }
