@@ -1,26 +1,39 @@
 const express = require('express');
 const WebSocket = require('ws');
 const http = require('http');
-const cors = require('cors');
 
 const app = express();
-app.use(cors());
+
+// CORS - Permitir qualquer origem
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 app.use(express.json());
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Armazena clientes conectados
+// Armazena clientes conectados (agentes)
 const clients = new Map();
+
+// Armazena dashboards conectados
+const dashboards = new Set();
 
 // WebSocket connection
 wss.on('connection', (ws) => {
-    console.log('Novo cliente conectado');
+    console.log('Nova conexão WebSocket');
     
-    // Envia info inicial
+    // Enviar info inicial
     ws.send(JSON.stringify({
         action: 'welcome',
-        message: 'Conectado ao servidor',
+        message: 'Conectado ao servidor Atritelecom',
         clients: clients.size
     }));
     
@@ -28,7 +41,7 @@ wss.on('connection', (ws) => {
         try {
             const data = JSON.parse(message);
             
-            // Ping/Pong para medir latência
+            // Ping/Pong para medir latência (dashboard)
             if (data.type === 'ping') {
                 ws.send(JSON.stringify({
                     type: 'pong',
@@ -38,7 +51,7 @@ wss.on('connection', (ws) => {
                 return;
             }
             
-            // Autenticação do cliente (agent)
+            // Autenticação do agente
             if (data.action === 'auth') {
                 clients.set(data.cliente_id, {
                     ws: ws,
@@ -46,33 +59,45 @@ wss.on('connection', (ws) => {
                     last_ping: Date.now()
                 });
                 ws.cliente_id = data.cliente_id;
-                console.log(`Cliente ${data.cliente_id} autenticado`);
+                ws.isAgent = true;
+                console.log(`Agente ${data.cliente_id} autenticado`);
                 
                 ws.send(JSON.stringify({
                     action: 'auth_success',
                     message: 'Autenticado com sucesso'
                 }));
                 
-                // Notifica dashboards sobre novo cliente
-                broadcastToDashboards({
+                // Notificar dashboards
+                notifyDashboards({
                     action: 'client_connected',
                     cliente_id: data.cliente_id,
+                    info: data.info,
                     clients: clients.size
                 });
+                return;
             }
             
-            // Agent enviando status/info
+            // Status update do agente
             if (data.action === 'status_update') {
                 if (ws.cliente_id && clients.has(ws.cliente_id)) {
                     const client = clients.get(ws.cliente_id);
                     client.info = data.info || client.info;
                     client.last_ping = Date.now();
+                    console.log(`Status atualizado: ${ws.cliente_id}`);
                 }
+                return;
             }
             
-            // Recebe resposta do agent
+            // Resposta de comando do agente
             if (data.request_id) {
-                console.log(`Resposta recebida para request ${data.request_id}`);
+                console.log(`Resposta para request ${data.request_id}`);
+                // Notificar dashboards sobre a resposta
+                notifyDashboards({
+                    action: 'command_response',
+                    request_id: data.request_id,
+                    cliente_id: ws.cliente_id,
+                    data: data
+                });
             }
             
         } catch (error) {
@@ -83,15 +108,16 @@ wss.on('connection', (ws) => {
     ws.on('close', () => {
         if (ws.cliente_id) {
             clients.delete(ws.cliente_id);
-            console.log(`Cliente ${ws.cliente_id} desconectado`);
+            console.log(`Agente ${ws.cliente_id} desconectado`);
             
-            // Notifica dashboards
-            broadcastToDashboards({
+            // Notificar dashboards
+            notifyDashboards({
                 action: 'client_disconnected',
                 cliente_id: ws.cliente_id,
                 clients: clients.size
             });
         }
+        dashboards.delete(ws);
     });
     
     ws.on('error', (err) => {
@@ -99,10 +125,10 @@ wss.on('connection', (ws) => {
     });
 });
 
-// Broadcast para conexões que não são agents (dashboards)
-function broadcastToDashboards(data) {
+// Notificar todos os dashboards conectados
+function notifyDashboards(data) {
     wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN && !client.cliente_id) {
+        if (client.readyState === WebSocket.OPEN && !client.isAgent) {
             client.send(JSON.stringify(data));
         }
     });
@@ -110,11 +136,12 @@ function broadcastToDashboards(data) {
 
 // ========== ENDPOINTS HTTP ==========
 
-// Health check / status geral
+// Página inicial / Health check
 app.get('/', (req, res) => {
     res.json({ 
         status: 'ok',
         service: 'Atritelecom WebSocket Server',
+        version: '1.0.0',
         clients: clients.size,
         timestamp: Date.now()
     });
@@ -146,22 +173,32 @@ app.get('/status/:cliente_id', (req, res) => {
     const cliente_id = req.params.cliente_id;
     const client = clients.get(cliente_id);
     
-    res.json({
-        cliente_id,
-        online: !!client,
-        info: client ? client.info : null,
-        last_ping: client ? client.last_ping : null,
-        timestamp: Date.now()
-    });
+    if (client) {
+        res.json({
+            cliente_id,
+            online: true,
+            info: client.info,
+            last_ping: client.last_ping,
+            timestamp: Date.now()
+        });
+    } else {
+        res.json({
+            cliente_id,
+            online: false,
+            info: null,
+            last_ping: null,
+            timestamp: Date.now()
+        });
+    }
 });
 
-// Enviar comando pro agent
+// Enviar comando pro agente
 app.post('/command/:cliente_id', (req, res) => {
     const cliente_id = req.params.cliente_id;
     const client = clients.get(cliente_id);
     
     if (!client) {
-        return res.status(404).json({ error: 'Cliente offline' });
+        return res.status(404).json({ error: 'Cliente offline', online: false });
     }
     
     const command = {
@@ -169,13 +206,21 @@ app.post('/command/:cliente_id', (req, res) => {
         request_id: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     };
     
-    client.ws.send(JSON.stringify(command));
-    res.json({ success: true, request_id: command.request_id });
+    try {
+        client.ws.send(JSON.stringify(command));
+        res.json({ success: true, request_id: command.request_id });
+    } catch (e) {
+        res.status(500).json({ error: 'Erro ao enviar comando', message: e.message });
+    }
 });
 
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
+    console.log('========================================');
+    console.log('  Atritelecom WebSocket Server v1.0.0');
+    console.log('========================================');
     console.log(`Servidor rodando na porta ${PORT}`);
     console.log(`WebSocket: ws://localhost:${PORT}`);
     console.log(`HTTP: http://localhost:${PORT}`);
+    console.log('========================================');
 });
