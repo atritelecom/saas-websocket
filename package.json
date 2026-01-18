@@ -1,16 +1,22 @@
 {
-  "name": "saas-websocket-server",
-  "version": "1.0.0",
-  "description": "Servidor WebSocket para Atritelecom IA Home",
-  "main": "server.js",
+  "name": "atritelecom-agent",
+  "version": "2.0.0",
+  "description": "Agente de monitoramento com suporte a câmeras e IoT",
+  "main": "agent.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node agent.js",
+    "build": "pkg agent.js --targets node18-win-x64 --output dist/AtritelecomAgent.exe"
+  },
+  "bin": "agent.js",
+  "pkg": {
+    "scripts": "agent.js",
+    "targets": ["node18-win-x64"],
+    "outputPath": "dist"
   },
   "dependencies": {
-    "express": "^4.18.2",
     "ws": "^8.14.2"
   },
-  "engines": {
-    "node": ">=18.0.0"
+  "devDependencies": {
+    "pkg": "^5.8.1"
   }
 }
